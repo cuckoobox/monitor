@@ -416,6 +416,40 @@ int hook_create_stub(uint8_t *tramp, const uint8_t *addr, int len)
                 tramp += 3;
             }
             addr += 7;
+        } 
+        else if (*addr == 0x48 && addr[1] == 0xFF && addr[2] == 0x25) {
+            // This code block handles a specific assembly instruction sequence that
+            // corresponds to a 64-bit relative jump (jmp qword ptr [rip+displacement]).
+            // It checks the validity and accessibility of the target memory addresses 
+            // before attempting to read them and perform a jump.
+
+            // Calculate the address in the Immediate Address Table (IAT) using the displacement
+            // provided in the instruction sequence.
+            const uint8_t * iat = addr + *(int32_t *)(addr + 3) + 7;
+
+            MEMORY_BASIC_INFORMATION mbi;
+            // Use VirtualQuery to obtain information about the memory area pointed to by iat
+            if (VirtualQuery(iat, &mbi, sizeof(mbi)) == 0) {
+                pipe("CRITICAL:VirtualQuery iat failed for %p!", iat);
+                return -1; 
+            }
+            // Ensure the memory is not marked as NOACCESS or EXECUTE only, to prevent access violations
+            if (mbi.Protect & PAGE_NOACCESS || mbi.Protect & PAGE_EXECUTE) {
+                pipe("CRITICAL:VirtualQuery failed for %p!", iat);
+                return -1; 
+            }
+
+            // Retrieve the target address from the IAT and check its validity
+            const uint8_t *target = *(const uint8_t **)(iat);
+            // Use VirtualQuery again to ensure that the target address is also valid and accessible
+            if (VirtualQuery(target, &mbi, sizeof(mbi)) == 0) {
+                pipe("CRITICAL:VirtualQuery target failed for %p!", target);
+                return -1; 
+            }
+
+            tramp += asm_jump(tramp, target);
+
+            addr += 7; 
         }
 #endif
         // Return instruction indicates the end of basic block as well so we
